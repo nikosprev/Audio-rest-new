@@ -19,6 +19,9 @@ apollo_training/
 *.wav
 *.mp3
 
+# Ignore asserts directory (large audio files)
+asserts/
+
 # Ignore Python cache
 __pycache__/
 *.pyc
