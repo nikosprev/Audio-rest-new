@@ -18,26 +18,90 @@ import argparse
 from tqdm import tqdm
 import json
 from datetime import datetime
+import glob
 
 class PMQDDataset(Dataset):
     """Dataset for PMQD audio restoration"""
     
     def __init__(self, h5_path, split='train'):
-        self.h5_path = h5_path
         self.split = split
         
-        with h5py.File(h5_path, 'r') as f:
-            self.clean_data = f[f'{split}/clean'][:]
-            self.degraded_data = f[f'{split}/degraded'][:]
-        
-        print(f"Loaded {len(self.clean_data)} {split} samples")
+        if os.path.isdir(h5_path):
+            self.is_h5 = False
+            self.data_dir = h5_path
+            clean_dir = os.path.join(h5_path, 'small_wav')
+            degraded_dir = os.path.join(h5_path, 'small_degraded_wav')
+            
+            if not os.path.exists(clean_dir) or not os.path.exists(degraded_dir):
+                raise ValueError("Required subdirectories small_wav and small_degraded_wav not found")
+            
+            all_files = sorted([f for f in os.listdir(clean_dir) if f.endswith('.wav')])
+            
+            if len(all_files) == 0:
+                raise ValueError("No wav files found in small_wav")
+            
+            # Check degraded has same files
+            degraded_files_set = set(os.listdir(degraded_dir))
+            for f in all_files:
+                if f not in degraded_files_set:
+                    raise ValueError(f"Missing degraded file for {f}")
+            
+            # Split 80/20
+            num_total = len(all_files)
+            num_train = int(num_total * 0.8)
+            if num_train == 0 and num_total > 0:
+                num_train = num_total - 1  # Ensure at least one for val if small
+            
+            if self.split == 'train':
+                self.files = all_files[:num_train]
+            elif self.split == 'val':
+                self.files = all_files[num_train:]
+            else:
+                raise ValueError(f"Unknown split: {self.split}")
+            
+            self.clean_files = [os.path.join(clean_dir, f) for f in self.files]
+            self.degraded_files = [os.path.join(degraded_dir, f) for f in self.files]
+            
+            print(f"Loaded {len(self.files)} {split} file pairs from directory")
+        else:
+            self.is_h5 = True
+            self.h5_path = h5_path
+            with h5py.File(h5_path, 'r') as f:
+                self.clean_data = f[f'{split}/clean'][:]
+                self.degraded_data = f[f'{split}/degraded'][:]
+            
+            print(f"Loaded {len(self.clean_data)} {split} samples from HDF5")
     
     def __len__(self):
-        return len(self.clean_data)
+        if self.is_h5:
+            return len(self.clean_data)
+        else:
+            return len(self.files)
     
     def __getitem__(self, idx):
-        clean = torch.FloatTensor(self.clean_data[idx])
-        degraded = torch.FloatTensor(self.degraded_data[idx])
+        if self.is_h5:
+            clean = torch.FloatTensor(self.clean_data[idx])
+            degraded = torch.FloatTensor(self.degraded_data[idx])
+        else:
+            target_sr = 44100
+            target_length = target_sr * 3  # 3 seconds
+            
+            clean_audio, _ = librosa.load(self.clean_files[idx], sr=target_sr)
+            degraded_audio, _ = librosa.load(self.degraded_files[idx], sr=target_sr)
+            
+            # Truncate or pad to target length
+            if len(clean_audio) > target_length:
+                clean_audio = clean_audio[:target_length]
+            else:
+                clean_audio = np.pad(clean_audio, (0, target_length - len(clean_audio)), mode='constant')
+            
+            if len(degraded_audio) > target_length:
+                degraded_audio = degraded_audio[:target_length]
+            else:
+                degraded_audio = np.pad(degraded_audio, (0, target_length - len(degraded_audio)), mode='constant')
+            
+            clean = torch.FloatTensor(clean_audio)
+            degraded = torch.FloatTensor(degraded_audio)
         
         return {
             'clean': clean,
@@ -246,7 +310,7 @@ def train_model(h5_path, output_dir, num_epochs=50, batch_size=4, lr=0.001):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Apollo model on PMQD dataset")
-    parser.add_argument("--h5_path", type=str, required=True, help="Path to HDF5 dataset")
+    parser.add_argument("--h5_path", type=str, required=True, help="Path to HDF5 dataset or directory containing small_wav/small_degraded_wav")
     parser.add_argument("--output_dir", type=str, default="./apollo_output", help="Output directory")
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
