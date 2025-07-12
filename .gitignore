@@ -1,2 +1,27 @@
+# Ignore model weights
+*.pth
+apollo_*/best_model.pth
+apollo_*/checkpoint_*.pth
+
+# Ignore datasets and generated data
+hdf5_datas/
+*.h5
+quick_test_results/
+quick_test_synthetic/
+apollo_results/
+comparison_results/
+apollo_advanced/
+apollo_balanced/
+apollo_improved/
+apollo_training/
+
+# Ignore audio outputs
+*.wav
+*.mp3
+
+# Ignore Python cache
+__pycache__/
 *.pyc
-*.DS_Store
+
+# Ignore Jupyter notebooks checkpoints
+.ipynb_checkpoints/
